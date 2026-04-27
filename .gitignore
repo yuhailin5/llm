@@ -1,0 +1,22 @@
+﻿# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# Environment
+.env
+
+# Jupyter
+.ipynb_checkpoints/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# Large datasets (download at runtime)
+dl/data/MNIST/raw/
+dl/data/otto-group-product-classification-challenge/*.csv
+dl/stage1/otto_submission.csv
