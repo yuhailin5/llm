@@ -45,7 +45,7 @@ class BPETokenizer:
     def vocab(self):
         v={}
         v.update(self.i2b)
-        v.update({id:token.encode('utf-8') for id,token in self.sp_i2s.items()})
+        v.update({id:token.encode('utf-8') for id,token in self.i2s.items()})
         return v
 
 
