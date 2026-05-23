@@ -2,7 +2,7 @@ import torch
 import sys
 from pathlib import Path
 sys.path.append(str(Path(__file__).parent.parent))
-from MyEmbeding import MyEmbedding, PositionalEncoding
+from MyEmbedding import MyEmbedding, PositionalEncoding
 from MyTokenizer import BPETokenizer
 
 tokenizer = BPETokenizer(300)

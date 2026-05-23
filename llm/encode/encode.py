@@ -1,9 +1,15 @@
 import torch
 from attention import MyMultiHeadAttention
 
-class MyEncode(torch.nn.Module):
+class MyEncoder(torch.nn.Module):
 
     def __init__(self,embedding_dim,num_heads,ffn_dim,dropout=0.1):
+        """
+        embedding_dim: 输入和输出的维度
+        num_heads: 注意力头的数量
+        ffn_dim: 前馈网络的隐藏层维度
+        dropout: dropout的概率
+        """
         super(MyEncode,self).__init__()
         self.embedding_dim = embedding_dim
         self.ffn_dim = ffn_dim

@@ -21,7 +21,7 @@ class MyMultiHeadAttention(torch.nn.Module):
         # 缩放点积注意力
         self.sdp_attention = MySDPAttention(self.head_dim)
 
-    def forward(self,x):
+    def forward(self,x,mask=None):
         batch_size = x.size(0)
 
         # 线性变换生成Q、K、V
@@ -30,7 +30,7 @@ class MyMultiHeadAttention(torch.nn.Module):
         v = self.v_linear(x).view(batch_size, -1, self.num_heads, self.head_dim).transpose(1, 2)
 
         # 计算多头注意力
-        attn_output = self.sdp_attention(q, k, v)
+        attn_output = self.sdp_attention(q, k, v, mask)
 
         # 将多头输出拼接并通过输出线性层
         attn_output = attn_output.transpose(1, 2).contiguous().view(batch_size, -1, self.embedding_dim)
