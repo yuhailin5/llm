@@ -88,6 +88,7 @@ bpe.train([corpus])  # 用整个语料训练BPE
 bpe.add_special_tokens(['<|im_start|>', '<|im_end|>', '<|endoftext|>', '<|padding|>'])  # 添加特殊token
 bpe.save('llm/bin/bpe_tokenizer.bin')  # 保存训练好的BPE模型
 #bpe.load('llm/bin/bpe_tokenizer.bin')  # 加载预训练的BPE模型
+
 class PoemDataset(Dataset):
     def __init__(self, train_pairs, bpe):
         self.train_pairs = train_pairs
@@ -119,7 +120,6 @@ class PoemDataset(Dataset):
 
 from MyEmbedding import MyEmbedding
 from decode import MyDecoder
-from attention import MyMultiHeadAttention
 
 dataset = PoemDataset(train_pairs, bpe)
 
@@ -225,14 +225,14 @@ def generate_poem(model, bpe, input_sentence):
 
 if __name__ == '__main__':
     # 加载模型
-    train()
+    #train()
     model = load_model(PoemNSPModel(), 'llm/bin/poem_nsp_model.pth')
     # ===================== 开始测试：诗句接龙 =====================
     print("="*50)
-    print("滕王阁序 诗句接龙模型（训练完成）")
+    print("滕王阁序 诗句接龙 模型（训练完成）")
     print("="*50)
 
-    # 测试列表（你可以随便加）
+    # 测试列表
     test_sentences = [
         "豫章故郡",
         "星分翼轸",
@@ -241,7 +241,8 @@ if __name__ == '__main__':
         "人杰地灵",
         "都督阎公之雅望",
         "十旬休假",
-        "落霞与孤鹜齐飞"
+        "落霞与孤鹜齐飞",
+        "阁中帝子今何在"
     ]
 
     for input_s in test_sentences:
@@ -249,4 +250,3 @@ if __name__ == '__main__':
         print(f"输入上句：{input_s}")
         print(f"模型输出：{output_s}")
         print("-" * 30)
-

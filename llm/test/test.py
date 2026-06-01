@@ -1,21 +1,29 @@
-import torch
-from attention import MyMultiHeadAttention
-# 1. 构造输入
-batch_size = 2
-seq_len = 4
-embedding_dim = 128
-num_heads = 4
+import os
+print(os.getcwd())
 
-x = torch.randn(batch_size, seq_len, embedding_dim)
+from MyTokenizer import BPETokenizer
+cn_bpe_train = []
+en_bpe_train = []
 
-# 2. 【关键】生成 Decoder 专用的因果掩码（下三角为1，上三角为0） # tril: 生成下三角矩阵 unsqueeze(0): 升维
-mask = torch.tril(torch.ones(seq_len, seq_len)).unsqueeze(0).unsqueeze(0)
-# mask shape: (1, 1, seq_len, seq_len) 适配多头维度
+# 构建BPE语料
+def build_corpus(src_file, tgt_file):
+    with open(src_file, 'r', encoding='utf-8') as f_src, open (tgt_file, 'r', encoding='utf-8') as f_tgt:
+        for src_line, tgt_line in zip(f_src, f_tgt):
+            src_line = src_line.strip()
+            tgt_line = tgt_line.strip()
+            if src_line and tgt_line:
+                cn_bpe_train.append(src_line)
+                en_bpe_train.append(tgt_line)
+build_corpus('llm/data/transformer_train/cn.txt', 'llm/data/transformer_train/en.txt')
 
-# 3. 初始化掩码多头注意力
-masked_mha = MyMultiHeadAttention(embedding_dim, num_heads)
+# 训练BPE分词器
+cn_tokenizer = BPETokenizer(max_vocab_size=3000)
+en_tokenizer = BPETokenizer(max_vocab_size=3000)
 
-# 4. Decoder 前向传播（传入mask）
-output = masked_mha(x, mask)
+cn_tokenizer.fit(cn_bpe_train)
+en_tokenizer.fit(en_bpe_train)
+cn_tokenizer.save('llm/bin/cn_transformer_bpe_tokenizer.bin')
+en_tokenizer.save('llm/bin/en_transformer_bpe_tokenizer.bin')
 
-print(x)
+print("中文BPE词表大小:", cn_tokenizer.vocab_size)
+print("英文BPE词表大小:", en_tokenizer.vocab_size)

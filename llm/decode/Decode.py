@@ -1,5 +1,5 @@
 import torch
-from attention import MyMultiHeadAttention
+from ..attention import MyMultiHeadAttention
 
 class MyDecoder(torch.nn.Module):
 

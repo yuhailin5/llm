@@ -1,5 +1,5 @@
 import torch
-from attention import MyMultiHeadAttention
+from ..attention import MyMultiHeadAttention
 
 class MyEncoder(torch.nn.Module):
 
@@ -10,7 +10,7 @@ class MyEncoder(torch.nn.Module):
         ffn_dim: 前馈网络的隐藏层维度
         dropout: dropout的概率
         """
-        super(MyEncode,self).__init__()
+        super(MyEncoder,self).__init__()
         self.embedding_dim = embedding_dim
         self.ffn_dim = ffn_dim
         self.num_heads = num_heads
@@ -30,9 +30,9 @@ class MyEncoder(torch.nn.Module):
         # dropout层
         self.dropout = torch.nn.Dropout(dropout)
     
-    def forward(self,x):
+    def forward(self,x, mask=None):
         # 多头注意力
-        attn_output = self.mha(x)
+        attn_output = self.mha(x, mask=mask)
         x = self.norm1(x + self.dropout(attn_output)) # 残差连接和归一化
 
         # 前馈网络
