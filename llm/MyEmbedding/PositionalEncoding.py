@@ -2,7 +2,7 @@ import torch
 
 class PositionalEncoding(torch.nn.Module):
     
-    def __init__(self,max_pos,embedding_dim):
+    def __init__(self,embedding_dim,max_pos):
         super(PositionalEncoding,self).__init__()
         self.max_pos = max_pos
         self.embedding_dim = embedding_dim
