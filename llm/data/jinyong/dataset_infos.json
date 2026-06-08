@@ -1,0 +1,1 @@
+{"default":{"features":{"name":{"_type":"Value"},"txt":{"_type":"Value"}},"splits":{"validation":{"name":"validation","dataset_name":"jinyong"},"train":{"name":"train","dataset_name":"jinyong"}}}}
