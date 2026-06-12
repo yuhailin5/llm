@@ -14,6 +14,8 @@ NovelGPT — 金庸武侠小说小型 GPT（Decoder-Only）模型
 
 import os
 import argparse
+import math
+import time
 
 import torch
 import torch.nn as nn
@@ -29,7 +31,7 @@ from tokenizers.pre_tokenizers import BertPreTokenizer
 # 全局配置
 # ──────────────────────────────────────────────
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DATA_DIR = os.path.normpath(os.path.join(BASE_DIR, "..", "..", "data", "jinyong"))
+DATA_DIR = os.path.join(BASE_DIR, "data")
 MODEL_DIR = os.path.normpath(os.path.join(BASE_DIR, "bin"))
 TOKENIZER_PATH = os.path.join(DATA_DIR, "bpe_tokenizer.json")
 
@@ -43,15 +45,15 @@ TRAIN_FILES = [
 
 # 模型
 VOCAB_SIZE = 8000
-BLOCK_SIZE = 256
-BATCH_SIZE = 16
-D_MODEL = 256
-N_HEAD = 8
-NUM_LAYERS = 6
+BLOCK_SIZE = 512
+BATCH_SIZE = 32
+D_MODEL = 384
+N_HEAD = 12
+NUM_LAYERS = 8
 DROPOUT = 0.1
 
 # 训练
-LR = 1e-4
+LR = 6e-4
 EPOCHS = 10
 WARMUP_STEPS = 200
 GRAD_CLIP = 1.0
@@ -113,12 +115,67 @@ def build_dataloader():
             return ids[idx : idx + BLOCK_SIZE], ids[idx + 1 : idx + BLOCK_SIZE + 1]
 
     ds = GPTDataset()
-    return DataLoader(ds, batch_size=BATCH_SIZE, shuffle=True, drop_last=True)
+    return DataLoader(
+        ds,
+        batch_size=BATCH_SIZE,
+        shuffle=True,
+        drop_last=True,
+        pin_memory=True,
+        num_workers=2,
+        persistent_workers=True,
+    )
 
 
 # ──────────────────────────────────────────────
-# GPT 模型（Decoder-Only）
+# GPT 模型（Decoder-Only）— 自定义 TransformerBlock
 # ──────────────────────────────────────────────
+class TransformerBlock(nn.Module):
+    """Pre-LN Transformer Block, 使用 F.scaled_dot_product_attention 触发 Flash Attention"""
+
+    def __init__(self, d_model, n_head, dropout=0.1):
+        super().__init__()
+        self.ln1 = nn.LayerNorm(d_model)
+        self.ln2 = nn.LayerNorm(d_model)
+
+        # QKV 合并投影：一次矩阵乘法出 Q/K/V，比三个独立 Linear 快
+        self.qkv = nn.Linear(d_model, 3 * d_model, bias=False)
+        self.out_proj = nn.Linear(d_model, d_model, bias=False)
+
+        self.ffn = nn.Sequential(
+            nn.Linear(d_model, d_model * 4, bias=False),
+            nn.GELU(),
+            nn.Linear(d_model * 4, d_model, bias=False),
+            nn.Dropout(dropout),
+        )
+        self.drop_attn = nn.Dropout(dropout)
+        self.n_head = n_head
+        self.head_dim = d_model // n_head
+        self.d_model = d_model
+
+    def forward(self, x):
+        # --- Self-Attention (Pre-LN) ---
+        residual = x
+        x_norm = self.ln1(x)
+        B, T, C = x_norm.shape
+
+        qkv = self.qkv(x_norm).view(B, T, 3, self.n_head, self.head_dim)
+        q, k, v = qkv.unbind(dim=2)  # 各 (B, T, n_head, head_dim)
+        q = q.transpose(1, 2)  # (B, n_head, T, head_dim)
+        k = k.transpose(1, 2)
+        v = v.transpose(1, 2)
+
+        # is_causal=True → 自动走 Flash Attention / Memory-Efficient Attention
+        attn_out = F.scaled_dot_product_attention(q, k, v, is_causal=True)
+        attn_out = attn_out.transpose(1, 2).reshape(B, T, C)
+        attn_out = self.out_proj(attn_out)
+
+        x = residual + self.drop_attn(attn_out)
+
+        # --- Feed-Forward (Pre-LN) ---
+        x = x + self.ffn(self.ln2(x))
+        return x
+
+
 class NovelGPT(nn.Module):
     def __init__(self):
         super().__init__()
@@ -127,14 +184,7 @@ class NovelGPT(nn.Module):
         self.drop = nn.Dropout(DROPOUT)
 
         self.layers = nn.ModuleList([
-            nn.TransformerEncoderLayer(
-                d_model=D_MODEL,
-                nhead=N_HEAD,
-                dim_feedforward=D_MODEL * 4,
-                dropout=DROPOUT,
-                batch_first=True,
-                activation="gelu",
-            )
+            TransformerBlock(D_MODEL, N_HEAD, DROPOUT)
             for _ in range(NUM_LAYERS)
         ])
 
@@ -144,19 +194,19 @@ class NovelGPT(nn.Module):
         # Weight tying: 输出投影与词嵌入共享权重
         self.head.weight = self.tok_emb.weight
 
-    def forward(self, x, targets=None):
-        B, T = x.shape
+        # 预计算位置索引，避免每个 forward 重复分配
+        pos_idx = torch.arange(BLOCK_SIZE, dtype=torch.long)
+        self.register_buffer("pos_idx", pos_idx, persistent=False)
 
-        # Causal mask — 每个位置只能看到自身及之前的 token
-        mask = torch.triu(torch.ones(T, T, device=x.device), diagonal=1)
-        mask = mask.masked_fill(mask == 1, float("-inf"))
+    def forward(self, x, targets=None):
+        _, T = x.shape
 
         # Embedding + 可学习位置编码
-        x = self.tok_emb(x) + self.pos_emb(torch.arange(T, device=x.device))
+        x = self.tok_emb(x) + self.pos_emb(self.pos_idx[:T])
         x = self.drop(x)
 
         for layer in self.layers:
-            x = layer(x, src_mask=mask)
+            x = layer(x)
 
         x = self.ln_f(x)
         logits = self.head(x)
@@ -200,7 +250,7 @@ class WarmupCosineScheduler:
             1, self.total_steps - self.warmup_steps
         )
         return self.min_lr + 0.5 * (self.base_lrs[0] - self.min_lr) * (
-            1 + torch.cos(torch.tensor(torch.pi * progress)).item()
+            1 + math.cos(math.pi * progress)
         )
 
 
@@ -208,16 +258,40 @@ class WarmupCosineScheduler:
 # 训练
 # ──────────────────────────────────────────────
 def train():
+    # 加速设置
+    torch.backends.cudnn.benchmark = True
+
     ensure_tokenizer()
     dataloader = build_dataloader()
 
     model = NovelGPT().to(DEVICE)
+
+    # torch.compile 加速（PyTorch >= 2.0）
+    if hasattr(torch, "compile"):
+        try:
+            model = torch.compile(model, mode="reduce-overhead")
+            print("[模型] torch.compile 已启用 (reduce-overhead)")
+        except Exception as e:
+            print(f"[模型] torch.compile 不可用: {e}")
+
     n_params = sum(p.numel() for p in model.parameters())
     print(f"[模型] 参数量: {n_params:,}")
 
-    optimizer = optim.Adam(model.parameters(), lr=LR)
+    # Fused AdamW（PyTorch >= 2.0），回退普通 Adam
+    try:
+        optimizer = optim.AdamW(model.parameters(), lr=LR, fused=True)
+        print("[优化器] Fused AdamW")
+    except (RuntimeError, TypeError):
+        optimizer = optim.AdamW(model.parameters(), lr=LR)
+        print("[优化器] AdamW (未融合)")
+
     total_steps = EPOCHS * len(dataloader)
     scheduler = WarmupCosineScheduler(optimizer, WARMUP_STEPS, total_steps)
+
+    # AMP 混合精度
+    use_amp = DEVICE == "cuda"
+    scaler = torch.amp.GradScaler("cuda", enabled=use_amp)
+    print(f"[训练] AMP 混合精度: {'启用' if use_amp else '关闭'}")
 
     os.makedirs(MODEL_DIR, exist_ok=True)
     best_path = os.path.join(MODEL_DIR, "best_novel_gpt.pth")
@@ -230,27 +304,40 @@ def train():
     for epoch in range(EPOCHS):
         model.train()
         epoch_loss = 0.0
+        t0 = time.time()
 
         for batch_idx, (x, y) in enumerate(dataloader):
-            x, y = x.to(DEVICE), y.to(DEVICE)
+            x, y = x.to(DEVICE, non_blocking=True), y.to(DEVICE, non_blocking=True)
 
-            optimizer.zero_grad()
-            _, loss = model(x, y)
-            loss.backward()
+            optimizer.zero_grad(set_to_none=True)
+
+            with torch.amp.autocast("cuda", enabled=use_amp):
+                _, loss = model(x, y)
+
+            scaler.scale(loss).backward()
+            scaler.unscale_(optimizer)
             torch.nn.utils.clip_grad_norm_(model.parameters(), GRAD_CLIP)
-            optimizer.step()
+            scaler.step(optimizer)
+            scaler.update()
             scheduler.step()
 
             epoch_loss += loss.item()
             if (batch_idx + 1) % 10 == 0:
+                elapsed = time.time() - t0
+                steps_done = batch_idx + 1
+                steps_left = steps_per_epoch - steps_done
+                eta = elapsed / steps_done * steps_left if steps_done > 0 else 0
                 print(
                     f"  Epoch [{epoch+1:2d}/{EPOCHS}] "
-                    f"Step [{batch_idx+1:4d}/{steps_per_epoch}] "
-                    f"Loss: {loss.item():.4f}"
+                    f"Step [{steps_done:4d}/{steps_per_epoch}] "
+                    f"Loss: {loss.item():.4f} | "
+                    f"{steps_done / elapsed:.1f} step/s | "
+                    f"ETA: {eta:.0f}s"
                 )
 
         avg_loss = epoch_loss / steps_per_epoch
-        print(f"==> Epoch [{epoch+1}/{EPOCHS}] 平均 Loss: {avg_loss:.4f}")
+        elapsed = time.time() - t0
+        print(f"==> Epoch [{epoch+1}/{EPOCHS}] 平均 Loss: {avg_loss:.4f} | 耗时: {elapsed:.0f}s")
 
         if avg_loss < best_loss:
             best_loss = avg_loss
