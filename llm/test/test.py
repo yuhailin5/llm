@@ -1,29 +1,30 @@
-import os
-print(os.getcwd())
+x = [1,2,3,4,5,6,7,8]
+import torch
 
-from MyTokenizer import BPETokenizer
-cn_bpe_train = []
-en_bpe_train = []
+base = torch.tensor(10000,dtype=torch.float32)
 
-# 构建BPE语料
-def build_corpus(src_file, tgt_file):
-    with open(src_file, 'r', encoding='utf-8') as f_src, open (tgt_file, 'r', encoding='utf-8') as f_tgt:
-        for src_line, tgt_line in zip(f_src, f_tgt):
-            src_line = src_line.strip()
-            tgt_line = tgt_line.strip()
-            if src_line and tgt_line:
-                cn_bpe_train.append(src_line)
-                en_bpe_train.append(tgt_line)
-build_corpus('llm/data/transformer_train/cn.txt', 'llm/data/transformer_train/en.txt')
 
-# 训练BPE分词器
-cn_tokenizer = BPETokenizer(max_vocab_size=3000)
-en_tokenizer = BPETokenizer(max_vocab_size=3000)
+# 旋转编码测试
+def encode():
 
-cn_tokenizer.fit(cn_bpe_train)
-en_tokenizer.fit(en_bpe_train)
-cn_tokenizer.save('llm/bin/cn_transformer_bpe_tokenizer.bin')
-en_tokenizer.save('llm/bin/en_transformer_bpe_tokenizer.bin')
+    # theta
+    theta = 1.0 / (base ** (torch.arange(0,8,2,dtype=torch.float32)/8))
+    print(theta)
+    # m
+    m = torch.arange(0,8,dtype=torch.float32)
+    print(m)
+    freqs = torch.outer(m,theta)
+    print("freqs shape = ",freqs.shape)
+    print(freqs)
 
-print("中文BPE词表大小:", cn_tokenizer.vocab_size)
-print("英文BPE词表大小:", en_tokenizer.vocab_size)
+    # 批量并行计算，不用实时算三角函数
+    cos = torch.cos(freqs)
+
+    sin = torch.sin(freqs)
+
+    return cos,sin
+
+cos , sin = encode()
+print(cos[0:2])
+print(sin[0:2])
+
